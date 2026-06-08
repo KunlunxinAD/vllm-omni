@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import logging
+import os
 import traceback
 from itertools import chain
 from typing import TYPE_CHECKING
@@ -121,7 +122,26 @@ def musa_omni_platform_plugin() -> str | None:
     return "vllm_omni.platforms.musa.platform.MUSAOmniPlatform" if is_musa else None
 
 
+def kunlun_omni_platform_plugin() -> str | None:
+    """Check if Kunlun OmniPlatform should be activated."""
+    is_kunlun = False
+    logger.debug("Checking if Kunlun OmniPlatform is available.")
+    try:
+        import torch
+        from vllm_xpu.platforms.kunlun import XPU3Platform
+
+        if hasattr(XPU3Platform, "is_kunlun") and XPU3Platform.is_kunlun() and torch.cuda.is_available():
+            is_kunlun = True
+    except Exception as e:
+        logger.debug("Kunlun vllm_xpu probe failed: %s", str(e))
+
+    if is_kunlun:
+        logger.debug("Confirmed Kunlun OmniPlatform is available.")
+    return "vllm_omni.platforms.kunlun.platform.KunlunOmniPlatform" if is_kunlun else None
+
+
 builtin_omni_platform_plugins = {
+    "kunlun": kunlun_omni_platform_plugin,
     "cuda": cuda_omni_platform_plugin,
     "rocm": rocm_omni_platform_plugin,
     "npu": npu_omni_platform_plugin,
