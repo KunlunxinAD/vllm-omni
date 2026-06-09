@@ -27,7 +27,12 @@ import requests
 import soundfile as sf
 import torch
 import yaml
-from openai import APIError, OpenAI, omit
+from openai import APIError, OpenAI
+
+try:
+    from openai import omit
+except ImportError:
+    from openai._types import Omit as omit
 from PIL import Image
 from vllm import TextPrompt, envs
 from vllm.distributed.parallel_state import (
