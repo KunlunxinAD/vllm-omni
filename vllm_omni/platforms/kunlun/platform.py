@@ -42,13 +42,20 @@ class KunlunOmniPlatform(OmniPlatform, KunlunPlatformBase):
         selected_backend: str | None,
         head_size: int,
     ) -> str:
-        if selected_backend is not None:
-            backend_upper = selected_backend.upper()
-            backend = DiffusionAttentionBackendEnum[backend_upper]
-            logger.debug("Using diffusion attention backend '%s'", backend_upper)
+        if selected_backend is None:
+            logger.debug("Defaulting Kunlun diffusion attention backend to SDPA")
+            return DiffusionAttentionBackendEnum.TORCH_SDPA.get_path()
+
+        backend_upper = selected_backend.upper()
+        backend = DiffusionAttentionBackendEnum[backend_upper]
+        if backend is DiffusionAttentionBackendEnum.TORCH_SDPA:
+            logger.debug("Using Kunlun diffusion attention backend '%s'", backend_upper)
             return backend.get_path()
 
-        logger.debug("Defaulting to diffusion attention backend SDPA")
+        logger.warning(
+            "Diffusion attention backend '%s' is not enabled on Kunlun; falling back to TORCH_SDPA.",
+            backend_upper,
+        )
         return DiffusionAttentionBackendEnum.TORCH_SDPA.get_path()
 
     @classmethod
