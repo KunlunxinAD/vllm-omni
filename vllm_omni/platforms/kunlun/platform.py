@@ -48,15 +48,8 @@ class KunlunOmniPlatform(OmniPlatform, KunlunPlatformBase):
 
         backend_upper = selected_backend.upper()
         backend = DiffusionAttentionBackendEnum[backend_upper]
-        if backend is DiffusionAttentionBackendEnum.TORCH_SDPA:
-            logger.debug("Using Kunlun diffusion attention backend '%s'", backend_upper)
-            return backend.get_path()
-
-        logger.warning(
-            "Diffusion attention backend '%s' is not enabled on Kunlun; falling back to TORCH_SDPA.",
-            backend_upper,
-        )
-        return DiffusionAttentionBackendEnum.TORCH_SDPA.get_path()
+        logger.debug("Using Kunlun diffusion attention backend '%s'", backend_upper)
+        return backend.get_path()
 
     @classmethod
     def supports_torch_inductor(cls) -> bool:
