@@ -37,50 +37,7 @@ if current_omni_platform.is_rocm():
         pass
 elif current_omni_platform.is_kunlun():
     try:
-        import xtorch_ops
-
-        def flash_attn_varlen_func(
-            q,
-            k,
-            v,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            dropout_p=0.0,
-            softmax_scale=None,
-            causal=False,
-            window_size=(-1, -1),
-            alibi_slopes=None,
-            deterministic=False,
-            return_attn_probs=False,
-        ):
-            if window_size != (-1, -1):
-                raise NotImplementedError("Kunlun flash attention does not support window_size")
-            if alibi_slopes is not None:
-                raise NotImplementedError("Kunlun flash attention does not support alibi_slopes")
-            if return_attn_probs:
-                raise NotImplementedError("Kunlun flash attention does not support return_attn_probs")
-
-            output = xtorch_ops.flash_attn_varlen_func(
-                q=q,
-                k=k,
-                v=v,
-                cu_seqlens_qo=cu_seqlens_q,
-                cu_seqlens_kv=cu_seqlens_k,
-                max_seqlen_qo=max_seqlen_q,
-                max_seqlen_kv=max_seqlen_k,
-                dropout_p=dropout_p,
-                softmax_scale=softmax_scale,
-                causal=causal,
-                deterministic=deterministic,
-                is_varlen=True,
-                is_prefill=True,
-                cu_seqlens_qo_cpu=cu_seqlens_q.cpu(),
-            )
-            if isinstance(output, tuple):
-                return output[0]
-            return output
+        from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func  # noqa: F401
     except (ImportError, ModuleNotFoundError):
         pass
 elif current_omni_platform.is_xpu():
