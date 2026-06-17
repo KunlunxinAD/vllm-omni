@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+import sys
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -15,6 +16,18 @@ from vllm_xpu.platforms.kunlun import XPU3Platform as KunlunPlatformBase
 logger = init_logger(__name__)
 
 
+def _register_kunlun_cumem_alias() -> None:
+    """Route vLLM CuMem imports to the XPU implementation on Kunlun."""
+    import vllm.device_allocator as vllm_device_allocator
+    import vllm_xpu.device_allocator.cumem as xpu_cumem
+
+    sys.modules["vllm.device_allocator.cumem"] = xpu_cumem
+    vllm_device_allocator.cumem = xpu_cumem
+
+
+_register_kunlun_cumem_alias()
+
+
 class KunlunOmniPlatform(OmniPlatform, KunlunPlatformBase):
     """Kunlun XPU implementation of OmniPlatform.
 
@@ -26,11 +39,11 @@ class KunlunOmniPlatform(OmniPlatform, KunlunPlatformBase):
 
     @classmethod
     def get_omni_ar_worker_cls(cls) -> str:
-        return "vllm_omni.worker.gpu_ar_worker.GPUARWorker"
+        return "vllm_omni.platforms.kunlun.worker.kunlun_ar_worker.KunlunARWorker"
 
     @classmethod
     def get_omni_generation_worker_cls(cls) -> str:
-        return "vllm_omni.worker.gpu_generation_worker.GPUGenerationWorker"
+        return "vllm_omni.platforms.kunlun.worker.kunlun_generation_worker.KunlunGenerationWorker"
 
     @classmethod
     def get_default_stage_config_path(cls) -> str:
