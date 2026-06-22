@@ -50,6 +50,11 @@ class KunlunOmniPlatform(OmniPlatform, KunlunPlatformBase):
         return "vllm_omni/model_executor/stage_configs"
 
     @classmethod
+    def has_flash_attn_package(cls) -> bool:
+        from vllm_omni.diffusion.attention.backends.utils.fa import flash_attn_func, flash_attn_varlen_func
+        return flash_attn_func is not None or flash_attn_varlen_func is not None
+
+    @classmethod
     def get_diffusion_attn_backend_cls(
         cls,
         selected_backend: str | None,
