@@ -18,6 +18,7 @@ from vllm.v1.spec_decode.draft_model import DraftModelProposer
 from vllm.v1.spec_decode.eagle import EagleProposer
 from vllm.v1.spec_decode.extract_hidden_states import ExtractHiddenStatesProposer
 from vllm.v1.worker.ubatch_utils import maybe_create_ubatch_slices
+import vllm_xpu.envs as xenvs
 from vllm_xpu.v1.worker.xpu_runner import XPUModelRunner
 
 from vllm_omni.worker.gpu_model_runner import OmniGPUModelRunner
@@ -314,6 +315,16 @@ class OmniKunlunModelRunner(XPUModelRunner, OmniGPUModelRunner):
                 hidden_states = outputs
             hidden_states, _ = self.extract_multimodal_outputs(hidden_states)
 
+            if (
+                not is_profile
+                and not is_graph_capturing
+                and xenvs.VOCAB_TENSOR_MODEL_PARALLEL_SIZE > 0
+            ):
+                if self.use_aux_hidden_state_outputs:
+                    self.model.compute_logits(outputs[1])
+                else:
+                    self.model.compute_logits(hidden_states)
+
             if self.speculative_config and (
                 self.speculative_config.use_eagle()
                 or self.speculative_config.uses_draft_model()
@@ -345,16 +356,31 @@ class OmniKunlunModelRunner(XPUModelRunner, OmniGPUModelRunner):
                 ):
                     use_cudagraphs = False
 
-                self.drafter.dummy_run(
-                    num_tokens,
-                    use_cudagraphs=use_cudagraphs,
-                    is_graph_capturing=is_graph_capturing,
-                    slot_mappings=slot_mappings,
-                    common_attn_metadata=spec_decode_common_attn_metadata,
-                    num_reqs=num_reqs,
-                    uniform_decode=uniform_decode,
-                    uniform_one_token_decode=uniform_one_token_decode,
+                need_interleaved_logits = (
+                    not is_profile
+                    and not is_graph_capturing
+                    and xenvs.VOCAB_TENSOR_MODEL_PARALLEL_SIZE > 0
+                    and not getattr(self.drafter, "use_local_argmax_reduction", False)
                 )
+                if need_interleaved_logits:
+                    self._drafter_dummy_run_interleaved(
+                        num_tokens,
+                        use_cudagraphs=use_cudagraphs,
+                        is_graph_capturing=is_graph_capturing,
+                        slot_mappings=slot_mappings,
+                        hidden_states=hidden_states,
+                    )
+                else:
+                    self.drafter.dummy_run(
+                        num_tokens,
+                        use_cudagraphs=use_cudagraphs,
+                        is_graph_capturing=is_graph_capturing,
+                        slot_mappings=slot_mappings,
+                        common_attn_metadata=spec_decode_common_attn_metadata,
+                        num_reqs=num_reqs,
+                        uniform_decode=uniform_decode,
+                        uniform_one_token_decode=uniform_one_token_decode,
+                    )
 
         self._register_layerwise_nvtx_hooks()
 
@@ -373,3 +399,85 @@ class OmniKunlunModelRunner(XPUModelRunner, OmniGPUModelRunner):
             torch.cuda.synchronize()
 
         return hidden_states, hidden_states[logit_indices_device]
+
+    @torch.inference_mode()
+    def _drafter_dummy_run_interleaved(
+        self,
+        num_tokens: int,
+        use_cudagraphs: bool = True,
+        is_graph_capturing: bool = False,
+        slot_mappings: dict | None = None,
+        hidden_states: torch.Tensor | None = None,
+    ) -> None:
+        """Run drafter warmup with logits between forwards for XPU vocab TP."""
+        drafter = self.drafter
+        num_spec_tokens = self.speculative_config.num_speculative_tokens
+        only_one_forward_pass = is_graph_capturing or drafter.parallel_drafting
+
+        for fwd_idx in range(1 if only_one_forward_pass else num_spec_tokens):
+            if fwd_idx <= 1:
+                result = drafter._determine_batch_execution_and_padding(
+                    num_tokens, use_cudagraphs=use_cudagraphs
+                )
+                cudagraph_runtime_mode = result[0]
+                num_input_tokens = result[1]
+                num_tokens_across_dp = result[2]
+
+            if (
+                drafter._draft_attn_layer_names
+                and slot_mappings is not None
+                and next(iter(drafter._draft_attn_layer_names)) in slot_mappings
+            ):
+                slot_mapping_dict = drafter._get_slot_mapping(num_input_tokens)
+            else:
+                slot_mapping_dict = slot_mappings or {}
+
+            with set_forward_context(
+                None,
+                drafter.vllm_config,
+                num_tokens=num_input_tokens,
+                num_tokens_across_dp=num_tokens_across_dp,
+                cudagraph_runtime_mode=cudagraph_runtime_mode,
+                slot_mapping=slot_mapping_dict,
+            ):
+                if drafter.supports_mm_inputs:
+                    input_ids = None
+                    inputs_embeds = drafter.inputs_embeds[:num_input_tokens]
+                else:
+                    input_ids = drafter.input_ids[:num_input_tokens]
+                    inputs_embeds = None
+
+                kwargs = dict(
+                    input_ids=input_ids,
+                    positions=drafter._get_positions(num_input_tokens),
+                    inputs_embeds=inputs_embeds,
+                )
+                if drafter.pass_hidden_states_to_model:
+                    kwargs["hidden_states"] = drafter.hidden_states[:num_input_tokens]
+                draft_output = drafter.model(**kwargs)
+
+            if draft_output is not None:
+                if isinstance(draft_output, tuple):
+                    draft_hidden_for_logits = draft_output[0][:1]
+                else:
+                    draft_hidden_for_logits = draft_output[:1]
+            else:
+                assert hidden_states is not None
+                draft_hidden_for_logits = hidden_states[:1]
+            drafter.model.compute_logits(draft_hidden_for_logits)
+
+    def _model_forward(self, *args, **kwargs):
+        from vllm_xpu.model_executor.layers.fused_moe.router.fused_topk_bias_router import fused_topk_bias
+        from vllm_xpu.model_executor.layers.fused_moe.router.grouped_topk_router import fused_grouped_topk
+
+        with (
+            patch(
+                "vllm.model_executor.layers.fused_moe.router.grouped_topk_router.fused_grouped_topk",
+                fused_grouped_topk,
+            ),
+            patch(
+                "vllm.model_executor.layers.fused_moe.router.fused_topk_bias_router.fused_topk_bias",
+                fused_topk_bias,
+            ),
+        ):
+            return super()._model_forward(*args, **kwargs)
