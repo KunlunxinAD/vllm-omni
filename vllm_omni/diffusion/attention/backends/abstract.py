@@ -120,7 +120,7 @@ class AttentionImpl(ABC, Generic[T]):
         """Dispatch to platform-specific forward implementation."""
         if current_omni_platform.is_rocm():
             return self.forward_hip(query, key, value, attn_metadata)
-        elif current_omni_platform.is_cuda():
+        elif current_omni_platform.is_cuda() or current_omni_platform.is_kunlun():
             return self.forward_cuda(query, key, value, attn_metadata)
         elif current_omni_platform.is_npu():
             return self.forward_npu(query, key, value, attn_metadata)

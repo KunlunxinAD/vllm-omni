@@ -3,7 +3,7 @@ Setup script for vLLM-Omni with hardware-dependent installation.
 
 This setup.py implements platform-aware dependency routing so users can run
 `pip install vllm-omni` and automatically receive the correct platform-specific
-dependencies (CUDA/ROCm/CPU/XPU/NPU/MUSA) without requiring extras like `[cuda]`.
+dependencies (CUDA/ROCm/CPU/XPU/NPU/MUSA/Kunlun) without requiring extras like `[cuda]`.
 """
 
 import os
@@ -46,16 +46,16 @@ def detect_target_device() -> str:
 
     Priority order:
     1. VLLM_OMNI_TARGET_DEVICE environment variable (highest priority)
-    2. Torch backend detection (cuda, rocm, npu, xpu, musa)
+    2. Torch backend detection (kunlun, cuda, rocm, npu, xpu, musa)
     3. CPU fallback (default)
 
     Returns:
-        str: Device name ('cuda', 'rocm', 'npu', 'xpu', 'musa', or 'cpu')
+        str: Device name ('kunlun', 'cuda', 'rocm', 'npu', 'xpu', 'musa', or 'cpu')
     """
     # Priority 1: Explicit override via environment variable
     target_device = os.environ.get("VLLM_OMNI_TARGET_DEVICE")
     if target_device:
-        valid_devices = ["cuda", "rocm", "npu", "xpu", "musa", "cpu"]
+        valid_devices = ["kunlun", "cuda", "rocm", "npu", "xpu", "musa", "cpu"]
         if target_device.lower() in valid_devices:
             print(f"Using target device from VLLM_OMNI_TARGET_DEVICE: {target_device.lower()}")
             return target_device.lower()
@@ -73,6 +73,16 @@ def detect_target_device() -> str:
     # --no-build-isolation flag
     try:
         import torch
+
+        # Check for Kunlun before CUDA because Kunlun exposes CUDA-compatible torch APIs.
+        try:
+            from vllm_xpu.platforms.kunlun import XPU3Platform
+
+            if hasattr(XPU3Platform, "is_kunlun") and XPU3Platform.is_kunlun() and torch.version.cuda is not None:
+                print("Detected Kunlun backend from vllm_xpu")
+                return "kunlun"
+        except Exception:
+            pass
 
         # Check for CUDA
         if torch.version.cuda is not None:
@@ -169,6 +179,8 @@ def get_vllm_omni_version() -> str:
             version += f"{sep}xpu"
         elif device == "musa":
             version += f"{sep}musa"
+        elif device == "kunlun":
+            version += f"{sep}kunlun"
         elif device == "cpu":
             version += f"{sep}cpu"
         else:

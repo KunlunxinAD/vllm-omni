@@ -35,6 +35,11 @@ if current_omni_platform.is_rocm():
             from aiter import flash_attn_func, flash_attn_varlen_func  # noqa: F401
     except (ImportError, ModuleNotFoundError):
         pass
+elif current_omni_platform.is_kunlun():
+    try:
+        from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func  # noqa: F401
+    except (ImportError, ModuleNotFoundError):
+        pass
 elif current_omni_platform.is_xpu():
     try:
         from vllm._xpu_ops import xpu_ops  # noqa: F401

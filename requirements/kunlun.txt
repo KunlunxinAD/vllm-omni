@@ -1,0 +1,3 @@
+-r common.txt
+# Kunlun platform dependencies are provided by the vllm_xpu runtime.
+onnxruntime>=1.23.2
